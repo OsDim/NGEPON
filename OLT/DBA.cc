@@ -182,6 +182,7 @@ void DBA::initialize() {
     totalSize = 0;
     doubleSize = 0;
     delaySize = 0;
+    cout << "MTU: " << MTU << endl;
 
 }
 
@@ -597,7 +598,7 @@ void DBA::finish() {
 
     if ( lastChangeChtime < 1 ) avgChannaltime = active_ch * (simTime() - 1 ) / simTimeLimit;
     if (  avgChannaltime > 4 ) avgChannaltime = 4 ;
-    //if (  avgChannaltime < 1 ) avgChannaltime = 1 ;
+
     out4 << "avgUseChannal " << avgChannaltime << endl;
 
     out4 << "\n\n\n" << endl;

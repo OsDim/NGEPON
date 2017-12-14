@@ -41,7 +41,8 @@ private:
           *up4I,*up4O,*down4I,*down4O;
     cMessage * sendUpstreamEvent;
     cMessage * sleepTimeoutEvent;
-    cMessage * checkHPQueue ;
+    cMessage * checkHPQueue;
+
 
     PowerControler * pwCtrler;
     bool goToSleep;
@@ -64,6 +65,9 @@ private:
     bool needTuning ;
     int REPORT_cycle;
     double totalQueueSize;
+    int tuningcount ;
+    int MaxQueueSize ;
+    int MaxGrantSize ;
 
 // -------------------------------------------
     bool getNeedSleep() {return goToSleep;}

@@ -21,7 +21,7 @@ Define_Module(Classifier);
 Classifier::Classifier() {
     sendUpstreamEvent = new cMessage();
     sleepTimeoutEvent = new cMessage();
-    checkHPQueue = new cMessage() ;
+    checkHPQueue = new cMessage();
 }
 Classifier::~Classifier() {
     cancelAndDelete(sendUpstreamEvent);
@@ -73,6 +73,7 @@ void Classifier::initialize() {
 
 
     needTuning = false ;
+    tuningcount = 0 ;
 
 //----------   dynamic  ---------------
     dynamicPoint = epon->par("dynamicPoint").doubleValue();
@@ -89,6 +90,8 @@ void Classifier::initialize() {
     newREPORT = simTime();
     REPORT_cycle = 0;
     totalQueueSize = 0;
+    MaxQueueSize = 0 ;
+    MaxGrantSize = 0 ;
 
 }
 
@@ -116,7 +119,25 @@ void Classifier::handleMessage(cMessage *msg) {
               send(pkt, up4O);
 
             scheduleAt(simTime(), sendUpstreamEvent);
-        } else if (strcmp(msg->getName(), "wakeEvent") == 0) {
+
+
+        }
+        else if (msg == sendUpstreamEvent && readyQueue.isEmpty()) {
+            int curSize = 0 ;
+            if ( !queues[0].empty() ) {
+              cQueue temp = queues[0] ;
+              for( int i = 0 ; i < temp.getLength() ; i ++ ) {
+                cPacket *tmpPkt = check_and_cast<cPacket *>(temp.pop());
+                curSize = curSize + tmpPkt->getByteLength();
+
+              }
+            }
+            curSize = curSize/pow(10,3) ;
+            if ( MaxQueueSize < curSize ) MaxQueueSize = curSize ;
+
+        }
+
+        else if (strcmp(msg->getName(), "wakeEvent") == 0) {
             earlyWakeUp();
             delete msg;
         }
@@ -130,9 +151,10 @@ void Classifier::handleMessage(cMessage *msg) {
 
         else if ( msg == checkHPQueue ) {
             if ( !queues[0].isEmpty() )
-              earlyWakeUp();
+                earlyWakeUp();
 
         }
+
     }
     // --Network Message--
     if (msg->getArrivalGate() == upI || msg->getArrivalGate() == up2I || msg->getArrivalGate() == up3I || msg->getArrivalGate() == up4I) {   // Upstream from gen.
@@ -189,7 +211,7 @@ void Classifier::finish() {
         out3 << upLoad*100 << "% " << downLoad*100 << "%" << endl ;
     }
 
-    out3 << getParentModule()->getId()-2 << " AvgUpQueueSize: " << totalQueueSize/REPORT_cycle << " KB, REPORT cycle: " << REPORT_cycle << endl;
+    out3 << getParentModule()->getId()-2 << " AvgUpQueueSize: " << totalQueueSize/REPORT_cycle << " MB " << " Max queue size : "<< MaxQueueSize << " KB, REPORT cycle: " << REPORT_cycle << endl;
 
 
     if (getParentModule()->getId() - 1 == onuSize)
@@ -197,6 +219,10 @@ void Classifier::finish() {
 
 
     out3.close();
+
+
+    //cout << getParentModule()->getId()-2 <<" " <<MaxGrantSize << endl ;
+
 }
 
 // ---------------------------------------
@@ -227,6 +253,7 @@ void Classifier::recvGateProcess(MPCPGate *gt) {
     if ( onuStayChannel != channel ) { // need tuning time
         needTuning = true ;
         onuStayChannel = channel ;
+        tuningcount ++ ;
 
     }
 
@@ -234,19 +261,15 @@ void Classifier::recvGateProcess(MPCPGate *gt) {
     bool upQueueLight =  true , downQueueLight = true ;
     if (dynamic_mode) {
             if ( MTW_algo ) {
-                if( upQueueSize>multiMTW*MTU ) {    // 1*MTU??
+                if( upQueueSize>multiMTW*MTU ) {
                     upQueueLight = false;
                 }
 
             }
             if ( upQueueLight && HP_must_empty ){
 
-                if ( !queues[0].isEmpty()) {
+                if ( !queues[0].isEmpty())
                   upQueueLight = false ;
-                  //cout << "ONU : " << idx << " has hp arrival !!!!!" << endl ;
-                }
-
-                //else cout << "ONU : " << idx << " no hp arrival !" << endl ;
 
             }
             if ( downQueueLight && HP_must_empty ){
@@ -337,7 +360,7 @@ void Classifier::recvGateProcess(MPCPGate *gt) {
             if (gt->getDownLength() == 0){  // no upstream and no downstream pkts, A->S
                 //startSaving =  simTime()+( 64 + gt->getLength() )*8*NS + MINUNIT;   // After Report send out
                 startSaving = simTime() + (64 + grantLength) * 8 * up_data_rate + MINUNIT; // After Report send out
-//                startSaving = simTime() + (64 + grantLength) * 8 * NS + MINUNIT; // After Report send out
+//
             }
             else {
                 //no upstream but has downstream, A->D
@@ -366,19 +389,18 @@ void Classifier::recvGateProcess(MPCPGate *gt) {
                 sendReport(0, 64, SLEEP);
                 //if( getParentModule()->getId() - 2 == 28 && simTime() > 1 ) cout << "ONU go to sleep at time : " << simTime() << endl ;
 //                sendReport(qc0+qc1, 64, SLEEP); //queue size =qc0+qc1, it may be 0 for none credited based or not 0 for credit based
-                startSaving = simTime() + ( gt->getDownLength()+64) * 8 * down_data_rate + MINUNIT + 0.00011 ;
+                startSaving = simTime() + ( gt->getDownLength()+64) * 8 * down_data_rate + MINUNIT + 0.000005 ;
 
                 //if ( idx == 18 && simTime() > 0.78 )
 
-                //cout << "idx : " << idx <<"active change in sleep in time : " << startSaving <<endl ;
+                                //cout << "idx : " << idx <<"active change in sleep in time : " << startSaving <<endl ;
 
                 pwCtrler->changeMode(SLEEP, startSaving, SLEEPTIME * MS);
+
 
                 scheduleAt(startSaving+0.00001, checkHPQueue);
 
                 scheduleAt(startSaving+SLEEPTIME*MS, sleepTimeoutEvent);
-
-
 
 //                cout << "[" << getParentModule()->getId()-2 << "] " << "sleep start: " << startSaving << endl;
                 //Note that put cout below sendReport and pwCtler cause no output as following line
@@ -404,8 +426,7 @@ void Classifier::recvGateProcess(MPCPGate *gt) {
                         pwCtrler->changeMode(DOZE, startSaving, 0);
 
                         scheduleAt(startSaving+0.00001, checkHPQueue);
-                        //if ( idx == 7 && simTime() > 0.55 )
-                      //cout << "idx : " << idx << "active change in doze " << endl ;
+
 
 
 //                    cout << "At ONU[" << idx << "] down queue size="<< gt->getDownLength() << " up queue size = " << qc0+qc1 << " and ONU go to doze" << endl;
@@ -489,6 +510,7 @@ void Classifier::earlyWakeUp() {
     if (pwCtrler->getEnergyMode() != ACTIVE){
         pwCtrler->setRemainAcitve(true);
 
+
         if (getParentModule()->getId()-2 == 20 && simTime() > 4.656 && simTime()< 4.683){
             cout << "(earlyWakeUp)wakeup to Acitve from " << pwCtrler->getEnergyMode()
                  << "[" << getParentModule()->getId()-2 << "] "<< "wake Up, t= " << simTime()
@@ -537,7 +559,8 @@ void Classifier::classify(MyPacket *pkt) {
 //                cout << "(classify)"<< headTimestamp <<  "  " << pwCtrler->getEnergyMode() << endl;
 
 
-            if (simTime() - headTimestamp >= delayBound) //10*pow(10,-3) = 10ms
+            //if ( pwCtrler->getEnergyMode() != ACTIVE ) // need early wake up
+            if (simTime() - headTimestamp >= delayBound  ) //10*pow(10,-3) = 10ms
             {
                 if (!cMessage("wakeEvent").isScheduled())
                 scheduleAt(simTime(), new cMessage("wakeEvent"));
@@ -570,7 +593,8 @@ uint32_t Classifier::respGrant(uint32_t grantSize) {
     //  (1)Calculate "nextRequest Length" (2)Put next upstream data to remainQueue
     uint32_t qlen = sizeof(queues) / sizeof(cQueue), index = 0, // Index of H-queue(0) or L-queue(1)
             nextSize = 0, totalSize = 0;
-
+    if ( MaxGrantSize < grantSize )
+      MaxGrantSize = grantSize ;
 
 //    if (getParentModule()->getId()-2 == 4 && simTime() > 4.099 && simTime() < 4.9503){
 //        cout << "(respGrant)t= " << simTime() << " , "<< pwCtrler->getEnergyMode() << endl;
@@ -619,9 +643,13 @@ MyPacket * Classifier::sendReport(int qInfo, int length, uint16_t mode) {
     MPCPReport * rep = new MPCPReport();
 
     uint32_t onuState = pwCtrler->getEnergyMode();
-    if (onuState != ACTIVE)
+    if (onuState != ACTIVE) {
         rep->setInvisible(true);
+        if ( !queues[0].isEmpty()) { // has high priority packet
+            earlyWakeUp() ;
+        }
 
+    }
     if (mode == DOZE)
         rep->setDozeAck(true);
     else if (mode == SLEEP)
@@ -636,6 +664,7 @@ MyPacket * Classifier::sendReport(int qInfo, int length, uint16_t mode) {
     rep->setByteLength(length);
     rep->setLastPkt(true);
     rep->setFinalGrantLen(finalGrantLen);
+    rep->setRequestLen(qc0+qc1) ;
 
     readyQueue.insert(rep);
     return rep;
@@ -644,10 +673,11 @@ MyPacket * Classifier::sendReport(int qInfo, int length, uint16_t mode) {
 void Classifier::upLoading()
 {
     uint32_t pktSize = (qc0 + qc1)*8;
-//    uint16_t pktLength = queues[1].length();
+
 //    uint16_t pktLength = queues[0].length() + queues[1].length();
 
     double loading = pktSize/pow(10,6)/(simTime()-newREPORT) ;// normalizeUp;
+
 
     totalQueueSize = totalQueueSize + (qc0+qc1)/pow(10,6);
     REPORT_cycle++;
@@ -679,6 +709,8 @@ void Classifier::upLoading()
 //        cout << delay*pow(10,3) << " ms" << endl;
 //    }
 
+
+    //cout << " up loading : " << upQueueLoading << endl ;
     lastREPORT = newREPORT;
     newREPORT = simTime();
 }
